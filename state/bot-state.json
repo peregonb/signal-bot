@@ -1,6 +1,6 @@
 {
   "strategy": "D",
-  "offset": 0,
+  "offset": 472453815,
   "history": [
     {
       "date": "2026-09-09",
@@ -10,5 +10,6 @@
   "minHold": {
     "holding": "SOL",
     "lastChangeDate": "2026-09-09"
-  }
+  },
+  "chatId": "381774688"
 }
