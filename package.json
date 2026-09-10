@@ -8,7 +8,8 @@
     "typecheck": "tsc",
     "signal": "tsx src/cli/signal.ts",
     "daily": "tsx src/cli/daily.ts",
-    "poll": "tsx src/cli/poll.ts"
+    "poll": "tsx src/cli/poll.ts",
+    "bot": "tsx src/cli/bot.ts"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

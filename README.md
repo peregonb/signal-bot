@@ -1,7 +1,8 @@
 # SignalBot — Telegram-уведомитель по спот-стратегиям
 
-Бот присылает **один раз в день** сигнал по выбранной стратегии и отвечает на команды
-по расписанию (GitHub Actions). Только уведомления — **без авто-трейдинга**.
+Бот присылает **один раз в день** сигнал по выбранной стратегии (00:30 UTC) и отвечает
+на команды **мгновенно** (постоянный long-polling на своём сервере). Только уведомления —
+**без авто-трейдинга**.
 
 Данные: Binance (дневные свечи, `data-api.binance.vision`).
 
@@ -32,17 +33,19 @@ signal-bot/
     strategy.ts      — правила B/D (EMA, моментум, min_hold)
     signalService.ts — расчёт сигнала + обновление состояния
     binance.ts       — загрузка дневных свечей
-    telegram.ts      — Telegram API (sendMessage, getUpdates)
+    telegram.ts      — Telegram API (sendMessage, long-poll getUpdates)
+    updateHandler.ts — обработка команд из апдейтов
+    dailyReport.ts   — отправка дневного отчёта (идемпотентная)
     state.ts         — состояние бота (стратегия, offset, история, min_hold)
     messages.ts      — тексты сообщений (русский)
     cli/
       signal.ts      — локальный запуск: печатает сигнал в терминал
-      daily.ts       — отправка дневного отчёта
-      poll.ts        — обработка команд / апдейтов
-  state/bot-state.json — состояние (коммитится обратно в репо)
-.github/workflows/
-  daily-signal.yml   — дневной отчёт (cron 00:30 UTC)
-  poll-bot.yml       — обработка команд (каждые 30 мин)
+      daily.ts       — разовая отправка дневного отчёта
+      poll.ts        — разовая обработка апдейтов
+      bot.ts         — постоянный процесс: long-poll + дневной отчёт по UTC-таймеру
+  state/bot-state.json — состояние (хранится на сервере посредством systemd)
+deploy/
+  signal-bot.service   — юнит systemd (автозапуск, перезапуск при сбое)
 ```
 
 ### Ключевые моменты
@@ -52,10 +55,13 @@ signal-bot/
 - **`min_hold` для D** — защита от слишком частой смены позиции: сигнал не переключается,
   если с прошлой смены прошло меньше 10 торговых дней. Последняя смена хранится в состоянии.
   Начинает отсчёт с первого запуска бота.
-- **Оффсет Telegram** хранится в `state/bot-state.json` и коммитится обратно в репо после
-  каждого прогона — чтобы команды не терялись и не дублировались.
+- **Оффсет Telegram** хранится в `state/bot-state.json` — на сервере. Состояние пишется
+  на диск после каждого апдейта, поэтому команды не теряются и не дублируются.
 - **Прогрев EMA** — для сигнала берутся ~320 дневных свечей, EMA считается по всей истории
   (с прогревом), в отличие от демо-бэктеста, где индикаторы считались по сегменту.
+- **Дневной отчёт** шлётся один раз в сутки в окне 00:30–00:59 UTC (после закрытия
+  дневной свечи). Дубль невозможен: `lastDailyDate` пишется в состояние.
+- **Задержка ответа** на команду — 1–2 секунды (long-polling с timeout=50 c), без cron.
 
 ## Локальный запуск
 
@@ -68,47 +74,64 @@ npm run signal
 
 Отправка в Telegram и polling требуют токен (см. ниже `.env` или переменные окружения).
 
-## Настройка на GitHub Actions
+## Развёртывание на VPS (Ubuntu)
 
-> Корень репозитория = папка `signal-bot/` (Workflow уже лежат в `.github/workflows/`).
+> Требуется любой VPS c Linux (Ubuntu 22.04/24.04), 1 vCPU, 1–2 GB RAM — например,
+> `VPS 2G` от ukraine.com.ua или `KVM 1` от Hostinger. Входящие порты не нужны:
+> бот только делает исходящие HTTPS-запросы. Шаринг-хостинг (cPanel) **не подходит** —
+> нельзя держать постоянный процесс.
 
-1. **Создайте бота в Telegram**
-   - Напишите [@BotFather](https://t.me/BotFather) → `/newbot` → получите токен вида
-     `123456:ABC-...`.
-2. **Создайте GitHub-репозиторий** и залейте код:
+1. **Создайте бота в Telegram** (если ещё не создан): @BotFather → `/newbot` → токен вида
+   `123456:ABC-...`.
+2. **На сервере, под `root`**:
    ```bash
-   git init
-   git add .
-   git commit -m "init signal-bot"
-   git branch -M main
-   git remote add origin https://github.com/<you>/<repo>.git
-   git push -u origin main
+   cd /opt
+   git clone https://github.com/peregonb/signal-bot.git
+   cd signal-bot
+   npm ci
    ```
-   (убедитесь, что `node_modules` не попадают в коммит — см. `.gitignore`)
-3. **Добавьте секреты** в репозиторий: `Settings → Secrets and variables → Actions`:
-   - `TELEGRAM_BOT_TOKEN` — токен от BotFather (**обязательно**)
-   - `TELEGRAM_CHAT_ID` — чат для дневного отчёта (**опционально**): ID чата с ботом.
-     Если не задан — бот возьмёт чат из первого сообщения (`/start`).
-   - `TELEGRAM_ALLOWED_IDS` — (**опционально**) разрешённые chat_id через запятую.
-     Если пусто — бот отвечает всем, кто напишет.
-4. **Запуск**
-   - Workflow `poll-bot` срабатывает каждые 30 мин и `daily-signal` — в 00:30 UTC.
-   - Можете запустить вручную: `Actions → daily-signal → Run workflow`.
-   - Напишите боту `/start` — он сохранит ваш чат как адрес для дневных отчётов
-     (если не задан `TELEGRAM_CHAT_ID`).
-5. **Готово.** Проверьте: `/signal`, `/strategy B`, `/strategy D`, `/status`, `/last`.
+3. **Установите Node.js 22** (если нет):
+   ```bash
+   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+   apt-get install -y nodejs
+   ```
+4. **Создайте `.env`** из шаблона:
+   ```bash
+   cp .env.example .env
+   nano .env
+   # TELEGRAM_BOT_TOKEN=<токен от BotFather>
+   # TELEGRAM_CHAT_ID=<ваш chat_id, опционально> — иначе бот возьмёт чат из /start
+   # TELEGRAM_ALLOWED_IDS= — опционально, через запятую
+   ```
+5. **Подготовьте системного пользователя и systemd-сервис**:
+   ```bash
+   useradd -r -s /usr/sbin/nologin signalbot
+   chown -R signalbot:signalbot /opt/signal-bot
+   cp deploy/signal-bot.service /etc/systemd/system/
+   systemctl daemon-reload
+   systemctl enable --now signal-bot
+   systemctl status signal-bot        # active (running)
+   ```
+   Логи: `tail -f /var/log/signal-bot.log`.
+6. **Напишите боту `/start`** — в ответ придёт справка, а chat_id сохранится в состоянии
+   (если не задан `TELEGRAM_CHAT_ID` — с этого момента дневной отчёт летит вам).
+7. **Проверка**: `/signal`, `/strategy B`, `/strategy D`, `/status`, `/last` — ответ приходит
+   мгновенно. Дневной отчёт — в 00:30 UTC.
+
+Команды для управления: `systemctl restart signal-bot`, `systemctl stop signal-bot`,
+`journalctl -u signal-bot -f`.
 
 ### Как узнать свой chat_id
 
-Отправьте боту любое сообщение, затем проверьте состояние в репо —
-`signal-bot/state/bot-state.json` → поле `chatId`. Либо используйте бота
+Отправьте боту любое сообщение, затем посмотрите на сервере
+`/opt/signal-bot/state/bot-state.json` → поле `chatId`. Либо используйте бота
 [@userinfobot](https://t.me/userinfobot).
 
 ## Важно и ограничения
 
-- **Расписание GitHub Actions не гарантировано**: возможны задержки 10–60 мин и редкие
-  пропуски. Для дневного сигнала это приемлемо; критические системы на это не закладывайте.
+- **Канал**: бот постоянно висит в памяти (~150–300 MB RAM). При сбое systemd перезапускает
+  его (Restart=always). Для надёжности можно добавить мониторинг (uptimerobot/ping в лог).
 - **`min_hold` считается по торговым дням** (по датам свечей), как в бэктесте.
-- **Секреты**: храните токен только в секретах GitHub, не коммитьте в репо.
-- Частоту polling можно поменять в `.github/workflows/poll-bot.yml` (cron). Обратите
-  внимание на минутную квоту GitHub Actions (бесплатные минуты ограничены).
+- **Секреты**: токен храните только в `.env` (не коммитьте в репо).
+- **Дневной отчёт** шлётся в окне 00:30–00:59 UTC; если сервер был выключен в этом окне —
+  отчёт за день пропустится.

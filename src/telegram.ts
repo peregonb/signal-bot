@@ -5,10 +5,12 @@ export interface TgUpdate {
   message?: { message_id: number; chat: { id: number }; text?: string };
 }
 
-export async function getUpdates(token: string, offset: number): Promise<TgUpdate[]> {
+export async function getUpdates(token: string, offset: number, timeoutSec = 0): Promise<TgUpdate[]> {
   const url =
-    `${API}/bot${token}/getUpdates?limit=100&timeout=0` + (offset ? `&offset=${offset}` : "");
-  const res = await fetch(url, { signal: AbortSignal.timeout(25000) });
+    `${API}/bot${token}/getUpdates?limit=100&timeout=${timeoutSec}` + (offset ? `&offset=${offset}` : "");
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(timeoutSec > 0 ? timeoutSec * 1000 + 15000 : 25000),
+  });
   const data = (await res.json()) as { ok?: boolean; result?: TgUpdate[]; description?: string };
   if (!data.ok) throw new Error(`Telegram getUpdates: ${data.description ?? "error"}`);
   return data.result ?? [];

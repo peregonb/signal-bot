@@ -1,0 +1,19 @@
+[Unit]
+Description=SignalBot — Telegram-уведомитель по спот-стратегиям (long-polling)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=signalbot
+Group=signalbot
+WorkingDirectory=/opt/signal-bot
+EnvironmentFile=/opt/signal-bot/.env
+ExecStart=/opt/signal-bot/node_modules/.bin/tsx src/cli/bot.ts
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/signal-bot.log
+StandardError=append:/var/log/signal-bot.log
+
+[Install]
+WantedBy=multi-user.target
