@@ -1,0 +1,21 @@
+{
+  "name": "signal-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Telegram-уведомитель по спот-стратегиям (B-реко / D-реко) на дневных свечах Binance",
+  "type": "commonjs",
+  "scripts": {
+    "typecheck": "tsc",
+    "signal": "tsx src/cli/signal.ts",
+    "daily": "tsx src/cli/daily.ts",
+    "poll": "tsx src/cli/poll.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.0"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "strategy": "D",
+  "offset": 0,
+  "history": [
+    {
+      "date": "2026-09-09",
+      "position": "SOL"
+    }
+  ],
+  "minHold": {
+    "holding": "SOL",
+    "lastChangeDate": "2026-09-09"
+  }
+}
