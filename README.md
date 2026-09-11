@@ -1,7 +1,7 @@
 # SignalBot — Telegram-уведомитель по спот-стратегиям
 
 Бот присылает **один раз в день** сигнал по выбранной стратегии (00:30 UTC) и отвечает
-на команды **мгновенно** (постоянный long-polling на своём сервере). Только уведомления —
+на команды **мгновенно** (Telegram webhook на Cloudflare Workers). Только уведомления —
 **без авто-трейдинга**.
 
 Данные: Binance (дневные свечи, `data-api.binance.vision`).
@@ -29,23 +29,23 @@ Python-эталоном 0.0%).
 
 ```
 signal-bot/
-  src/
-    strategy.ts      — правила B/D (EMA, моментум, min_hold)
-    signalService.ts — расчёт сигнала + обновление состояния
-    binance.ts       — загрузка дневных свечей
-    telegram.ts      — Telegram API (sendMessage, long-poll getUpdates)
-    updateHandler.ts — обработка команд из апдейтов
-    dailyReport.ts   — отправка дневного отчёта (идемпотентная)
-    state.ts         — состояние бота (стратегия, offset, история, min_hold)
-    messages.ts      — тексты сообщений (русский)
-    cli/
-      signal.ts      — локальный запуск: печатает сигнал в терминал
-      daily.ts       — разовая отправка дневного отчёта
-      poll.ts        — разовая обработка апдейтов
-      bot.ts         — постоянный процесс: long-poll + дневной отчёт по UTC-таймеру
-  state/bot-state.json — состояние (хранится на сервере посредством systemd)
+  worker/                — ПРОДУКЦИОННАЯ версия на Cloudflare Workers
+    wrangler.jsonc       — конфиг: KV (состояние), cron 00:30 UTC, секреты
+    src/                 — webhook (fetch/scheduled) + переиспользованные модули
+    scripts/             — deploy.sh (полный деплой), set-webhook.mjs
+  src/                   — эталонная Node-реализация (локальный тулинг)
+    strategy.ts          — правила B/D (EMA, моментум, min_hold)
+    signalService.ts     — расчёт сигнала + обновление состояния
+    binance.ts           — загрузка дневных свечей
+    telegram.ts          — Telegram API (sendMessage, long-poll getUpdates)
+    updateHandler.ts     — обработка команд из апдейтов
+    dailyReport.ts       — отправка дневного отчёта (идемпотентная)
+    state.ts             — состояние бота (стратегия, offset, история, min_hold)
+    messages.ts          — тексты сообщений (русский)
+    cli/                 — signal, daily, poll, bot (VPS/long-poll вариант)
+  state/bot-state.json — состояние (для Node-варианта; в Workers его заменяет KV)
 deploy/
-  signal-bot.service   — юнит systemd (автозапуск, перезапуск при сбое)
+  signal-bot.service   — юнит systemd (для VPS-варианта)
 ```
 
 ### Ключевые моменты
@@ -55,13 +55,15 @@ deploy/
 - **`min_hold` для D** — защита от слишком частой смены позиции: сигнал не переключается,
   если с прошлой смены прошло меньше 10 торговых дней. Последняя смена хранится в состоянии.
   Начинает отсчёт с первого запуска бота.
-- **Оффсет Telegram** хранится в `state/bot-state.json` — на сервере. Состояние пишется
-  на диск после каждого апдейта, поэтому команды не теряются и не дублируются.
+- **Оффсет Telegram** хранится в `state/bot-state.json` (Node-вариант). В Workers оффсет не
+  нужен — апдейты приходят по webhook, а состояние живёт в KV, пишется после каждого апдейта.
 - **Прогрев EMA** — для сигнала берутся ~320 дневных свечей, EMA считается по всей истории
   (с прогревом), в отличие от демо-бэктеста, где индикаторы считались по сегменту.
-- **Дневной отчёт** шлётся один раз в сутки в окне 00:30–00:59 UTC (после закрытия
-  дневной свечи). Дубль невозможен: `lastDailyDate` пишется в состояние.
-- **Задержка ответа** на команду — 1–2 секунды (long-polling с timeout=50 c), без cron.
+- **Дневной отчёт** шлётся один раз в сутки: в Workers — cron в 00:30 UTC, в Node-варианте —
+  окно 00:30–00:59 UTC (после закрытия дневной свечи). Дубль невозможен: `lastDailyDate`
+  пишется в состояние.
+- **Задержка ответа** — в Workers мгновенно (webhook), в Node-варианте 1–2 секунды
+  (long-polling с timeout=50 c), без cron.
 
 ## Локальный запуск
 
@@ -74,7 +76,47 @@ npm run signal
 
 Отправка в Telegram и polling требуют токен (см. ниже `.env` или переменные окружения).
 
-## Развёртывание на VPS (Ubuntu)
+## Развёртывание на Cloudflare Workers (рекомендуется)
+
+Бесплатный тариф: Worker + KV, 100 000 запросов/день. Ответ на команды — мгновенный через
+Telegram webhook, ежедневный отчёт — по cron в 00:30 UTC. Сервер держать не нужно.
+
+1. **Логин в Cloudflare** (откроется браузер):
+   ```bash
+   cd worker
+   npx wrangler login
+   ```
+2. **Полный деплой одним вызовом** (создаёт KV namespace, заливает Worker, секреты и webhook):
+   ```bash
+   cd worker
+   TELEGRAM_BOT_TOKEN=<токен от BotFather> \
+   WEBHOOK_SECRET=<любая строка> \
+   ./scripts/deploy.sh
+   ```
+   Опционально: `TELEGRAM_CHAT_ID=123` (иначе chat_id берётся из `/start`),
+   `TELEGRAM_ALLOWED_IDS=123,456` (белый список).
+3. **Проверка**: напишите боту `/start` → справка; `/signal` → сигнал по последней закрытой
+   дневной свече; `/strategy D` — сменить стратегию. Дневной отчёт придёт в 00:30 UTC.
+4. **Очередное обновление**: `cd worker && ./scripts/deploy.sh` (без токена в env — секреты
+   не перезаписываются).
+
+Секреты хранятся в Cloudflare (`wrangler secret put`), в репозиторий не попадают.
+URL бота: `https://signal-bot.<ваш-subdomain>.workers.dev`.
+
+### Локальная разработка Worker
+
+```bash
+cd worker
+cp .dev.vars.example .dev.vars   # впишите TELEGRAM_BOT_TOKEN и WEBHOOK_SECRET
+npm install
+npm run dev                      # wrangler dev --test-scheduled на :8787
+# вебхук: curl -X POST http://127.0.0.1:8787/webhook -H 'content-type: application/json' \
+#   -H 'X-Telegram-Bot-Api-Secret-Token: <secret>' -d '{"update_id":1,"message":{"message_id":1,"chat":{"id":123},"text":"/start"}}'
+# триггер cron: curl -X POST 'http://127.0.0.1:8787/__scheduled?cron=30+0+*+*+*'
+npm run typecheck                # tsc --noEmit
+```
+
+## Альтернатива: развёртывание на VPS (Ubuntu)
 
 > Требуется любой VPS c Linux (Ubuntu 22.04/24.04), 1 vCPU, 1–2 GB RAM — например,
 > `VPS 2G` от ukraine.com.ua или `KVM 1` от Hostinger. Входящие порты не нужны:

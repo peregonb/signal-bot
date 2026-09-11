@@ -3,3 +3,10 @@ dist/
 .env
 *.log
 .DS_Store
+
+# Cloudflare Worker (worker/)
+worker/.dev.vars
+worker/.wrangler/
+worker/.wrangler-dev/
+*.wrangler
+.wrangler/

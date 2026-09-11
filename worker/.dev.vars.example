@@ -1,0 +1,7 @@
+# Локальная разработка: скопируй в .dev.vars (файл в .gitignore)
+# и запусти `npm run dev`.
+
+TELEGRAM_BOT_TOKEN=""
+# WEBHOOK_SECRET=""
+# TELEGRAM_CHAT_ID=""
+# TELEGRAM_ALLOWED_IDS=""

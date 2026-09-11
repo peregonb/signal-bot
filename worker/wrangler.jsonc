@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "signal-bot",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-11",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.01 }
+  },
+  // Telegram webhook бота. KV хранит состояние (стратегия, chatId, история, min_hold).
+  "kv_namespaces": [
+    {
+      "binding": "STATE",
+      "id": "REPLACE_ME_KV_NAMESPACE_ID",
+      "preview_id": "REPLACE_ME_KV_NAMESPACE_ID"
+    }
+  ],
+  // Дневной отчёт после закрытия дневной свечи (00:30 UTC).
+  "triggers": {
+    "crons": ["30 0 * * *"]
+  },
+  "vars": {
+    "BINANCE_DATA_API": "https://data-api.binance.vision",
+    "SIGNAL_CANDLES": 320
+  }
+}
