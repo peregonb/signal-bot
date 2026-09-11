@@ -18,7 +18,7 @@ function isAllowed(chatId: number, allowedIds: string[]): boolean {
 }
 
 function marketFor(env: Env, strategy: "B" | "D"): Promise<Market> {
-  return buildMarket(env.BINANCE_DATA_API, env.SIGNAL_CANDLES, SYMBOLS[strategy]);
+  return buildMarket(env.STATE, env.SIGNAL_CANDLES, SYMBOLS[strategy]);
 }
 
 export async function handleMessage(env: Env, chatId: number, messageId: number, text: string): Promise<void> {

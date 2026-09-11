@@ -7,7 +7,8 @@
     "types": "wrangler types ./src/env.d.ts",
     "typecheck": "tsc --noEmit",
     "dev": "wrangler dev --test-scheduled",
-    "deploy": "./scripts/deploy.sh"
+    "deploy": "./scripts/deploy.sh",
+    "seed": "node scripts/seed-candles.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",

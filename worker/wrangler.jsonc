@@ -22,7 +22,6 @@
     "crons": ["30 0 * * *"]
   },
   "vars": {
-    "BINANCE_DATA_API": "https://data-api.binance.vision",
     "SIGNAL_CANDLES": 320
   }
 }
