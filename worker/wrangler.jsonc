@@ -13,8 +13,8 @@
   "kv_namespaces": [
     {
       "binding": "STATE",
-      "id": "REPLACE_ME_KV_NAMESPACE_ID",
-      "preview_id": "REPLACE_ME_KV_NAMESPACE_ID"
+      "id": "c9d67d3b391f42faaccccf75c27dece2",
+      "preview_id": "c9d67d3b391f42faaccccf75c27dece2"
     }
   ],
   // Дневной отчёт после закрытия дневной свечи (00:30 UTC).
