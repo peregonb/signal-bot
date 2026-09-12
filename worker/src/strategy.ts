@@ -36,19 +36,19 @@ export const SYMBOLS: Record<StrategyId, string[]> = {
 export const STRATEGIES: Record<StrategyId, StrategyMeta> = {
   B: {
     name: "B-реко",
-    desc: "BTC ↔ ETH, EMA 20/80, моментум 30д",
+    desc: "BTC ↔ ETH, EMA 20/80, моментум 30д, min_hold 1",
     fast: 20,
     slow: 80,
     mom: 30,
-    minHold: 0,
+    minHold: 1,
   },
   D: {
     name: "D-реко",
-    desc: "ротация топ-1 (BTC/ETH/BNB/SOL), EMA 10/50, моментум 30д, min_hold 10",
+    desc: "ротация топ-1 (BTC/ETH/BNB/SOL), EMA 10/50, моментум 30д, min_hold 1",
     fast: 10,
     slow: 50,
     mom: 30,
-    minHold: 10,
+    minHold: 1,
   },
 };
 
