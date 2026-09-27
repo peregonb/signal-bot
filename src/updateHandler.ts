@@ -72,8 +72,8 @@ export async function processUpdates(
         }
         case "/strategy": {
           const v = arg.trim().toUpperCase();
-          if (v !== "B" && v !== "D") {
-            reply = `Не распознал «${arg}». Используй /strategy B или /strategy D`;
+          if (v !== "B" && v !== "D" && v !== "F") {
+            reply = `Не распознал «${arg}». Используй /strategy B, /strategy D или /strategy F`;
             break;
           }
           next = { ...cur, strategy: v };

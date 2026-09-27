@@ -1,7 +1,7 @@
 import { ema, pctChange } from "./indicators";
 import type { BotMinHold } from "./state";
 
-export type StrategyId = "B" | "D";
+export type StrategyId = "B" | "D" | "F";
 
 export interface Market {
   dates: string[];
@@ -31,6 +31,7 @@ export interface StrategyMeta {
 export const SYMBOLS: Record<StrategyId, string[]> = {
   B: ["BTC", "ETH"],
   D: ["BTC", "ETH", "BNB", "SOL"],
+  F: ["BTC", "ETH", "BNB", "SOL", "SUI"],
 };
 
 export const STRATEGIES: Record<StrategyId, StrategyMeta> = {
@@ -45,6 +46,14 @@ export const STRATEGIES: Record<StrategyId, StrategyMeta> = {
   D: {
     name: "D-реко",
     desc: "ротация топ-1 (BTC/ETH/BNB/SOL), EMA 10/50, моментум 30д, min_hold 1",
+    fast: 10,
+    slow: 50,
+    mom: 30,
+    minHold: 1,
+  },
+  F: {
+    name: "F-реко",
+    desc: "ротация топ-1 (BTC/ETH/BNB/SOL/SUI), EMA 10/50, моментум 30д, min_hold 1",
     fast: 10,
     slow: 50,
     mom: 30,

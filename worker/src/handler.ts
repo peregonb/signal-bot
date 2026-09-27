@@ -1,5 +1,5 @@
 import { buildMarket } from "./binance";
-import { SYMBOLS, type Market } from "./strategy";
+import { SYMBOLS, type Market, type StrategyId } from "./strategy";
 import { evaluate } from "./signalService";
 import type { BotState } from "./state";
 import { loadState, saveState } from "./state";
@@ -17,7 +17,7 @@ function isAllowed(chatId: number, allowedIds: string[]): boolean {
   return allowedIds.length === 0 || allowedIds.includes(String(chatId));
 }
 
-function marketFor(env: Env, strategy: "B" | "D"): Promise<Market> {
+function marketFor(env: Env, strategy: StrategyId): Promise<Market> {
   return buildMarket(env.STATE, env.SIGNAL_CANDLES, SYMBOLS[strategy]);
 }
 
@@ -58,8 +58,8 @@ export async function handleMessage(env: Env, chatId: number, messageId: number,
       }
       case "/strategy": {
         const v = arg.trim().toUpperCase();
-        if (v !== "B" && v !== "D") {
-          reply = `Не распознал «${arg}». Используй /strategy B или /strategy D`;
+        if (v !== "B" && v !== "D" && v !== "F") {
+          reply = `Не распознал «${arg}». Используй /strategy B, /strategy D или /strategy F`;
           break;
         }
         next = { ...state, strategy: v };

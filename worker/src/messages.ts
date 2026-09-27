@@ -34,6 +34,7 @@ export function helpText(): string {
     "/status — статус и настройки",
     "/strategy B — B-реко (BTC ↔ ETH, EMA 20/80)",
     "/strategy D — D-реко (ротация топ-1, EMA 10/50)",
+    "/strategy F — F-реко (D + SUI, ротация топ-1, EMA 10/50)",
     "/last — последние сигналы",
     "/help — помощь",
     "",
@@ -79,12 +80,12 @@ export function statusText(id: StrategyId, signal: Signal, state: BotState): str
     `📅 Закрытая свеча: ${signal.date}`,
     `${posEmoji(signal.position)} Позиция: ${signal.position}`,
   ];
-  if (id === "D" && state.minHold?.holding) {
+  if ((id === "D" || id === "F") && state.minHold?.holding) {
     lines.push(
       `🔒 min_hold: держим ${state.minHold.holding} (последняя смена ${state.minHold.lastChangeDate ?? "—"})`,
     );
   }
-  lines.push("", "Сменить стратегию: /strategy B | /strategy D");
+  lines.push("", "Сменить стратегию: /strategy B | /strategy D | /strategy F");
   return lines.join("\n");
 }
 

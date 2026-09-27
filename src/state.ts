@@ -7,7 +7,7 @@ export interface BotMinHold {
 }
 
 export interface BotState {
-  strategy: "B" | "D";
+  strategy: "B" | "D" | "F";
   offset: number;
   chatId?: string;
   lastDailyDate?: string;
