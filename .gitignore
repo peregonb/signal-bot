@@ -4,6 +4,9 @@ dist/
 *.log
 .DS_Store
 
+# рабочее состояние (Node-вариант; в Workers его заменяет KV)
+state/bot-state.json
+
 # Cloudflare Worker (worker/)
 worker/.dev.vars
 worker/.wrangler/
