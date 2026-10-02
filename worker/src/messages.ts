@@ -2,7 +2,7 @@ import { STRATEGIES, SYMBOLS, type Signal, type StrategyId } from "./strategy";
 import type { BotState } from "./state";
 
 // Метка версии кода — меняйте при значимых правках, чтобы видеть в /help и /status, что задеплоено.
-export const BOT_BUILD = "2026-10-02 · REST Binance, отчёт 00:10 UTC";
+export const BOT_BUILD = "2026-10-02c · Bybit в 00:05 UTC, сверка с Binance в 02:30 UTC";
 
 function posEmoji(position: string): string {
   return position === "USDT" ? "⚪" : "🟢";
@@ -42,7 +42,7 @@ export function helpText(): string {
     "/help — помощь",
     "",
     "Данные: Binance, дневные свечи (UTC). Только уведомления, без авто-трейдинга.",
-    "Ежедневный отчёт: 00:10 UTC (03:10 Киев летом / 02:10 зимой).",
+    "Ежедневный отчёт: 00:05 UTC (03:05 Киев летом / 02:05 зимой).",
     `Версия: ${BOT_BUILD}`,
   ].join("\n");
 }
@@ -155,5 +155,22 @@ export function dailyErrorText(error: string): string {
     `⚠️ ${error}`,
     "",
     "Сигнал не посчитан. Повтори /signal позже или запусти локально: npm run signal",
+  ].join("\n");
+}
+
+export function provisionalNote(date: string, symbols: string[]): string {
+  return [
+    `📡 Свеча ${date} по ${symbols.join(", ")} — с Bybit (предварительно): Binance не пускает Cloudflare,`,
+    "а архив Binance выходит ~через 2 ч после закрытия.",
+    "В 02:30 UTC (05:30 Киев летом) бот сверит с архивом Binance и напишет, ТОЛЬКО если сигнал изменится.",
+  ].join("\n");
+}
+
+export function verifyChangedText(id: StrategyId, signal: Signal, before: string): string {
+  return [
+    "❗ Сверка с архивом Binance: сигнал ИЗМЕНИЛСЯ",
+    `По Bybit было: ${before} → по Binance: ${signal.position}`,
+    "",
+    signalText(id, signal),
   ].join("\n");
 }

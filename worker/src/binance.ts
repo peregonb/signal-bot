@@ -14,6 +14,7 @@ export interface DailySeries {
   dates: string[];
   closes: number[];
   errors: string[]; // почему не удалось получить свежие свечи (пусто, если всё ок)
+  provisional: string[]; // даты свечей, взятых с Bybit (ещё не подтверждены архивом Binance)
 }
 
 // Итог загрузки рынка: сами данные + проверка свежести.
@@ -23,12 +24,17 @@ export interface MarketResult {
   lastDate: string; // фактическая последняя свеча в данных
   fresh: boolean;
   errors: string[];
+  // Последняя свеча хотя бы одной монеты взята с Bybit (архив Binance ещё не вышел).
+  provisional: boolean;
+  provisionalSymbols: string[];
 }
 
 interface CachedSeries {
   firstOpenTime: number;
   lastOpenTime: number;
   closes: number[];
+  // openTime свечей, взятых с Bybit; заменяются архивом Binance, как только он выйдет.
+  provisional?: number[];
 }
 
 interface Kline {
@@ -149,37 +155,84 @@ function seriesFrom(times: number[], byTime: Map<number, number>): CachedSeries 
 // Только Binance: публичный market-data хост и основной API.
 const REST_HOSTS = ["https://data-api.binance.vision", "https://api.binance.com"];
 
-async function restDailyRows(symbol: string, fromMs: number, errors: string[]): Promise<Kline[]> {
+function httpError(status: number, body: string): Error {
+  const b = body.trim();
+  // HTML-страницы ошибок (403 от CDN) не тащим в сообщение
+  const short = b.startsWith("<") ? "" : b.slice(0, 120).replace(/\s+/g, " ");
+  return new Error(`HTTP ${status}${short ? ` ${short}` : ""}`);
+}
+
+async function binanceRows(host: string, symbol: string, fromMs: number, now: number): Promise<Kline[]> {
+  const url = `${host}/api/v3/klines?symbol=${symbol}USDT&interval=1d&startTime=${fromMs}&limit=1000`;
+  const res = await fetch(url, {
+    headers: { "user-agent": UA, accept: "application/json" },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw httpError(res.status, await res.text());
+  const rows = (await res.json()) as unknown[][];
+  return rows
+    .filter((r) => Number(r[0]) >= fromMs && Number(r[0]) + DAY_MS <= now)
+    .map((r) => ({ openTime: Number(r[0]), close: Number(r[4]) }));
+}
+
+// Bybit spot, дневные свечи (UTC, старт 00:00) — временная замена, пока Binance недоступен.
+export async function bybitRows(symbol: string, fromMs: number, now = Date.now()): Promise<Kline[]> {
+  const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${symbol}USDT&interval=D&start=${fromMs}&limit=1000`;
+  const res = await fetch(url, {
+    headers: { "user-agent": UA, accept: "application/json" },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw httpError(res.status, await res.text());
+  const json = (await res.json()) as { retCode?: number; retMsg?: string; result?: { list?: string[][] } };
+  if (json.retCode !== 0 || !Array.isArray(json.result?.list)) {
+    throw new Error(`retCode ${json.retCode} ${json.retMsg ?? ""}`.trim());
+  }
+  return json.result!.list!
+    .map((r) => ({ openTime: Number(r[0]), close: Number(r[4]) }))
+    .filter((k) => k.openTime >= fromMs && k.openTime + DAY_MS <= now)
+    .sort((a, b) => a.openTime - b.openTime);
+}
+
+// Свежие закрытые дневные свечи. Сначала Binance (если когда-нибудь пустит Cloudflare),
+// затем Bybit — его свечи помечаются как предварительные и потом заменяются архивом Binance.
+async function restDailyRows(
+  symbol: string,
+  fromMs: number,
+  errors: string[],
+): Promise<{ rows: Kline[]; provisional: boolean }> {
   const now = Date.now();
   for (const host of REST_HOSTS) {
-    const url = `${host}/api/v3/klines?symbol=${symbol}USDT&interval=1d&startTime=${fromMs}&limit=1000`;
     try {
-      const res = await fetch(url, {
-        headers: { "user-agent": UA, accept: "application/json" },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!res.ok) {
-        const body = (await res.text()).slice(0, 120).replace(/\s+/g, " ");
-        throw new Error(`HTTP ${res.status}${body ? ` ${body}` : ""}`);
-      }
-      const rows = (await res.json()) as unknown[][];
-      const out = rows
-        .filter((r) => Number(r[0]) >= fromMs && Number(r[0]) + DAY_MS <= now)
-        .map((r) => ({ openTime: Number(r[0]), close: Number(r[4]) }));
-      console.log(JSON.stringify({ event: "rest-ok", host, symbol, rows: out.length }));
-      return out;
+      const rows = await binanceRows(host, symbol, fromMs, now);
+      console.log(JSON.stringify({ event: "rest-ok", host, symbol, rows: rows.length }));
+      if (rows.length) return { rows, provisional: false };
     } catch (e) {
-      const msg = `${new URL(host).hostname}: ${(e as Error).message}`;
-      errors.push(`${symbol}: REST ${msg}`);
+      errors.push(`${symbol}: REST ${new URL(host).hostname}: ${(e as Error).message}`);
       console.log(JSON.stringify({ event: "rest-miss", host, symbol, error: (e as Error).message }));
     }
   }
-  return [];
+  try {
+    const rows = await bybitRows(symbol, fromMs, now);
+    console.log(JSON.stringify({ event: "bybit-ok", symbol, rows: rows.length }));
+    if (rows.length) return { rows, provisional: true };
+  } catch (e) {
+    errors.push(`${symbol}: Bybit: ${(e as Error).message}`);
+    console.log(JSON.stringify({ event: "bybit-miss", symbol, error: (e as Error).message }));
+  }
+  return { rows: [], provisional: false };
 }
 
-// Быстрая проверка: отвечает ли REST Binance этому воркеру прямо сейчас (для /status).
+// Быстрая проверка: отвечают ли REST Binance и Bybit этому воркеру прямо сейчас (для /status).
 export async function probeBinance(): Promise<string[]> {
-  return Promise.all(
+  const bybit = (async () => {
+    try {
+      const rows = await bybitRows("BTC", Math.floor(Date.now() / DAY_MS) * DAY_MS - 3 * DAY_MS);
+      return `✅ api.bybit.com: ${rows.length} свеч.`;
+    } catch (e) {
+      return `❌ api.bybit.com: ${(e as Error).message}`;
+    }
+  })();
+  const binance = Promise.all(
     REST_HOSTS.map(async (host) => {
       const name = new URL(host).hostname;
       try {
@@ -188,13 +241,42 @@ export async function probeBinance(): Promise<string[]> {
           signal: AbortSignal.timeout(10000),
         });
         if (res.ok) return `✅ ${name}: HTTP ${res.status}`;
-        const body = (await res.text()).slice(0, 100).replace(/\s+/g, " ");
-        return `❌ ${name}: HTTP ${res.status} ${body}`;
+        return `❌ ${name}: ${httpError(res.status, await res.text()).message}`;
       } catch (e) {
         return `❌ ${name}: ${(e as Error).message}`;
       }
     }),
   );
+  return [...(await binance), await bybit];
+}
+
+// Сравнение свечей Bybit и Binance за последний день, который уже есть в кэше от Binance
+// (для /status: насколько Bybit расходится с Binance на практике).
+export async function compareBybit(kv: KVNamespace, symbols: string[]): Promise<string[]> {
+  const out: string[] = [];
+  let day = "";
+  for (const s of symbols) {
+    const c = await loadCache(kv, s);
+    if (!c) continue;
+    const prov = new Set(c.provisional ?? []);
+    let t = c.lastOpenTime;
+    while (prov.has(t) && t > c.firstOpenTime) t -= DAY_MS; // берём последнюю свечу именно Binance
+    const binClose = c.closes[(t - c.firstOpenTime) / DAY_MS];
+    try {
+      const rows = await bybitRows(s, t);
+      const by = rows.find((k) => k.openTime === t);
+      if (!by) {
+        out.push(`${s}: нет свечи Bybit`);
+        continue;
+      }
+      day = ymd(t);
+      const pct = ((by.close - binClose) / binClose) * 100;
+      out.push(`${s}: ${pct >= 0 ? "+" : ""}${pct.toFixed(3)}%`);
+    } catch (e) {
+      out.push(`${s}: ${(e as Error).message}`);
+    }
+  }
+  return out.length ? [`Bybit vs Binance, close ${day || "—"}:`, out.join(" · ")] : [];
 }
 
 async function boundedFetch(urls: string[], symbol: string, concurrency = 8): Promise<Kline[]> {
@@ -223,12 +305,21 @@ async function extend(
   cache: CachedSeries,
   rows: Kline[],
   lastClosed: number,
+  opts: { provisional?: boolean } = {},
 ): Promise<CachedSeries> {
   const byTime = new Map<number, number>();
   for (let i = 0; i < cache.closes.length; i++) byTime.set(cache.firstOpenTime + i * DAY_MS, cache.closes[i]);
-  for (const k of rows) byTime.set(k.openTime, k.close);
+  const prov = new Set(cache.provisional ?? []);
+  for (const k of rows) {
+    byTime.set(k.openTime, k.close);
+    if (opts.provisional) prov.add(k.openTime);
+    else prov.delete(k.openTime); // свеча Binance заменяет свечу Bybit
+  }
   const times = [...byTime.keys()].filter((t) => t <= lastClosed).sort((a, b) => a - b);
-  return save(kv, symbol, seriesFrom(times, byTime));
+  const next = seriesFrom(times, byTime);
+  const kept = [...prov].filter((t) => t >= next.firstOpenTime && t <= next.lastOpenTime).sort((a, b) => a - b);
+  if (kept.length) next.provisional = kept;
+  return save(kv, symbol, next);
 }
 
 export async function fetchDailySeries(kv: KVNamespace, symbol: string, days: number): Promise<DailySeries> {
@@ -283,11 +374,28 @@ export async function fetchDailySeries(kv: KVNamespace, symbol: string, days: nu
     }
   }
 
-  // Хвост (свечи после кэша): сначала REST Binance — свеча доступна сразу после
-  // закрытия; архив — только если REST не ответил (файл появляется ~через 2 ч).
+  // Предварительные свечи Bybit → заменяем архивом Binance, если он уже вышел.
+  if (cache.provisional?.length) {
+    const urls = cache.provisional.map((t) => dailyUrl(symbol, ymd(t)));
+    const rows = await boundedFetch(urls, symbol);
+    if (rows.length) {
+      const diffs = rows
+        .map((k) => {
+          const i = (k.openTime - cache!.firstOpenTime) / DAY_MS;
+          const old = cache!.closes[i];
+          return old ? `${ymd(k.openTime)} ${(((k.close - old) / old) * 100).toFixed(3)}%` : "";
+        })
+        .filter(Boolean);
+      console.log(JSON.stringify({ event: "bybit-replaced", symbol, diffs }));
+      cache = await extend(kv, symbol, cache, rows, cache.lastOpenTime);
+    }
+  }
+
+  // Хвост (свечи после кэша): сначала REST Binance, затем Bybit (свеча доступна
+  // сразу после закрытия); архив Binance — если REST не ответил (появляется ~через 2 ч).
   if (cache.lastOpenTime < lastClosed) {
-    const rows = await restDailyRows(symbol, cache.lastOpenTime + DAY_MS, errors);
-    if (rows.length) cache = await extend(kv, symbol, cache, rows, lastClosed);
+    const r = await restDailyRows(symbol, cache.lastOpenTime + DAY_MS, errors);
+    if (r.rows.length) cache = await extend(kv, symbol, cache, r.rows, lastClosed, { provisional: r.provisional });
   }
   if (cache.lastOpenTime < lastClosed) {
     const urls: string[] = [];
@@ -303,10 +411,12 @@ export async function fetchDailySeries(kv: KVNamespace, symbol: string, days: nu
 
   const n = Math.min(cache.closes.length, Math.max(days, 1));
   const startIdx = cache.closes.length - n;
-  const out: DailySeries = { dates: [], closes: [], errors };
+  const prov = new Set((cache.provisional ?? []).map((t) => ymd(t)));
+  const out: DailySeries = { dates: [], closes: [], errors, provisional: [] };
   for (let i = 0; i < n; i++) {
     out.dates.push(utcDate(cache.firstOpenTime + (startIdx + i) * DAY_MS));
     out.closes.push(cache.closes[startIdx + i]);
+    if (prov.has(out.dates[i])) out.provisional.push(out.dates[i]);
   }
   return out;
 }
@@ -332,7 +442,10 @@ export async function buildMarket(kv: KVNamespace, days: number, symbols: string
     closes[symbols[i]] = trimmed[i].closes.slice(-n);
   }
   const fresh = lastDate === expectedDate;
+  const provisionalSymbols = symbols.filter((_, i) => per[i].provisional.includes(lastDate));
   return {
+    provisional: provisionalSymbols.length > 0,
+    provisionalSymbols,
     market: { dates, closes },
     expectedDate,
     lastDate,

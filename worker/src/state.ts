@@ -7,7 +7,12 @@ export interface BotState {
   strategy: "B" | "D" | "F";
   chatId?: string;
   lastDailyDate?: string;
+  // Что ушло в последнем дневном отчёте — для сверки Bybit → Binance (cron 02:30 UTC).
+  lastDaily?: { date: string; position: string; provisional: boolean; checked?: boolean };
   minHold?: BotMinHold;
+  // min_hold ДО первого расчёта за дату: повторный расчёт той же даты (например, когда
+  // свеча Bybit заменилась архивом Binance) идёт от него, а не от уже обновлённого.
+  minHoldBase?: { date: string; minHold?: BotMinHold };
   history: { date: string; position: string }[];
 }
 

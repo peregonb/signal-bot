@@ -1,4 +1,4 @@
-import { buildMarket, probeBinance, type MarketResult } from "./binance";
+import { buildMarket, compareBybit, probeBinance, type MarketResult } from "./binance";
 import { SYMBOLS, type StrategyId } from "./strategy";
 import { evaluate } from "./signalService";
 import type { BotState } from "./state";
@@ -14,6 +14,8 @@ import {
   dailyStaleText,
   dailyErrorText,
   staleText,
+  provisionalNote,
+  verifyChangedText,
   BOT_BUILD,
 } from "./messages";
 
@@ -32,10 +34,16 @@ function marketFor(env: Env, strategy: StrategyId): Promise<MarketResult> {
   return buildMarket(env.STATE, env.SIGNAL_CANDLES, SYMBOLS[strategy]);
 }
 
-async function versionLines(env: Env): Promise<string[]> {
+async function versionLines(env: Env, strategy: StrategyId): Promise<string[]> {
   const v = env.CF_VERSION;
   const deployed = v ? `${v.id.slice(0, 8)} от ${v.timestamp.slice(0, 16).replace("T", " ")} UTC` : "—";
-  return [`🛠 Код: ${BOT_BUILD}`, `🚀 Деплой: ${deployed}`, "Binance REST из Cloudflare:", ...(await probeBinance())];
+  return [
+    `🛠 Код: ${BOT_BUILD}`,
+    `🚀 Деплой: ${deployed}`,
+    "REST из Cloudflare:",
+    ...(await probeBinance()),
+    ...(await compareBybit(env.STATE, SYMBOLS[strategy])),
+  ];
 }
 
 export async function handleMessage(env: Env, chatId: number, messageId: number, text: string): Promise<void> {
@@ -69,9 +77,10 @@ export async function handleMessage(env: Env, chatId: number, messageId: number,
           cmd === "/signal"
             ? signalText(state.strategy, r.signal)
             : cmd === "/status"
-              ? statusText(state.strategy, r.signal, next, await versionLines(env))
+              ? statusText(state.strategy, r.signal, next, await versionLines(env, state.strategy))
               : lastText(state.strategy, next.history, r.signal);
         if (!m.fresh) reply = `${staleText(m.expectedDate, m.lastDate, m.errors)}\n\n———\n${reply}`;
+        else if (m.provisional) reply = `${reply}\n\n${provisionalNote(m.lastDate, m.provisionalSymbols)}`;
         break;
       }
       case "/strategy": {
@@ -97,7 +106,7 @@ export async function handleMessage(env: Env, chatId: number, messageId: number,
   console.log(JSON.stringify({ event: "handled", chatId, cmd, strategy: next.strategy }));
 }
 
-// Дневной отчёт (cron 00:10 UTC). Сообщение приходит ВСЕГДА: либо свежий сигнал,
+// Дневной отчёт (cron 00:05 UTC). Сообщение приходит ВСЕГДА: либо свежий сигнал,
 // либо явное предупреждение/ошибка — чтобы не гадать, почему отчёта нет.
 export async function sendDaily(env: Env): Promise<void> {
   const state = await loadState(env.STATE);
@@ -134,8 +143,39 @@ export async function sendDaily(env: Env): Promise<void> {
     console.log(JSON.stringify({ event: "daily-skip", date: signal.date, strategy: state.strategy }));
     return;
   }
-  await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, dailyText(state.strategy, signal));
+  const text = dailyText(state.strategy, signal);
+  await sendMessage(
+    env.TELEGRAM_BOT_TOKEN,
+    chatId,
+    m.provisional ? `${text}\n\n${provisionalNote(m.lastDate, m.provisionalSymbols)}` : text,
+  );
   next.lastDailyDate = signal.date;
+  next.lastDaily = { date: signal.date, position: signal.position, provisional: m.provisional };
   await saveState(env.STATE, next);
   console.log(JSON.stringify({ event: "daily-sent", date: signal.date, position: signal.position, strategy: state.strategy }));
+}
+
+// Сверка (cron 02:30 UTC): если отчёт ушёл по свече Bybit, пересчитываем по архиву
+// Binance. Пишет в Telegram ТОЛЬКО если позиция изменилась; иначе молча.
+export async function verifyDaily(env: Env): Promise<void> {
+  const state = await loadState(env.STATE);
+  const ld = state.lastDaily;
+  const chatId = state.chatId ?? env.TELEGRAM_CHAT_ID ?? "";
+  if (!ld || !ld.provisional || ld.checked || !chatId) {
+    console.log(JSON.stringify({ event: "verify-skip", lastDaily: ld ?? null }));
+    return;
+  }
+  const m = await marketFor(env, state.strategy);
+  if (m.lastDate !== ld.date || m.provisional) {
+    console.warn(JSON.stringify({ event: "verify-not-ready", date: ld.date, lastDate: m.lastDate, provisional: m.provisionalSymbols }));
+    return;
+  }
+  const { signal, state: next } = evaluate(state.strategy, m.market, state);
+  next.lastDaily = { ...ld, checked: true };
+  if (signal.position !== ld.position) {
+    await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, verifyChangedText(state.strategy, signal, ld.position));
+    next.lastDaily.position = signal.position;
+  }
+  await saveState(env.STATE, next);
+  console.log(JSON.stringify({ event: "verify-done", date: ld.date, bybit: ld.position, binance: signal.position }));
 }

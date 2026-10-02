@@ -1,5 +1,5 @@
 import type { TgUpdate } from "./telegram";
-import { handleMessage, sendDaily } from "./handler";
+import { handleMessage, sendDaily, verifyDaily } from "./handler";
 
 const WEBHOOK_PATH = "/webhook";
 
@@ -37,9 +37,11 @@ export default {
     return new Response("OK");
   },
 
-  async scheduled(_controller, env): Promise<void> {
+  async scheduled(controller, env): Promise<void> {
     try {
-      await sendDaily(env);
+      // 30 2 * * * — сверка Bybit → Binance; остальное — дневной отчёт.
+      if (controller.cron === "30 2 * * *") await verifyDaily(env);
+      else await sendDaily(env);
     } catch (e) {
       console.error(JSON.stringify({ event: "scheduled-error", error: e instanceof Error ? e.message : String(e) }));
     }
