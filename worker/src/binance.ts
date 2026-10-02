@@ -134,65 +134,6 @@ function seriesFrom(times: number[], byTime: Map<number, number>): CachedSeries 
   return { firstOpenTime: first, lastOpenTime: last, closes };
 }
 
-// Добирает закрытые дневные свечи через REST API (архивы Binance публикуются
-// с задержкой ~1.5-2.5 ч после закрытия). Источники пробуются по цепочке:
-// Binance -> Bybit -> OKX. Отбираются только полностью закрытые свечи.
-async function restDailyRows(symbol: string, fromMs: number, toMs: number): Promise<Kline[]> {
-  const now = Date.now();
-  const sources: Array<() => Promise<Kline[]>> = [
-    async () => {
-      const url = `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}USDT&interval=1d&startTime=${fromMs}&limit=500`;
-      const res = await fetch(url, {
-        headers: { "user-agent": UA, accept: "application/json" },
-        signal: AbortSignal.timeout(20000),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const rows = (await res.json()) as unknown[][];
-      return rows
-        .filter((r) => Number(r[0]) + DAY_MS <= now && Number(r[0]) >= fromMs)
-        .map((r) => ({ openTime: Number(r[0]), close: Number(r[4]) }));
-    },
-    async () => {
-      const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${symbol}USDT&interval=D&start=${fromMs}&limit=1000`;
-      const res = await fetch(url, {
-        headers: { "user-agent": UA, accept: "application/json" },
-        signal: AbortSignal.timeout(20000),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = (await res.json()) as { retCode?: number; result?: { list?: string[][] } };
-      if (json.retCode !== 0 || !json.result?.list) throw new Error(`retCode ${json.retCode}`);
-      return json.result.list
-        .filter((r) => Number(r[0]) + DAY_MS <= now && Number(r[0]) >= fromMs)
-        .map((r) => ({ openTime: Number(r[0]), close: Number(r[4]) }));
-    },
-    async () => {
-      const url = `https://www.okx.com/api/v5/market/candles?instId=${symbol}-USDT&bar=1Dutc&limit=300`;
-      const res = await fetch(url, {
-        headers: { "user-agent": UA, accept: "application/json" },
-        signal: AbortSignal.timeout(20000),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = (await res.json()) as { code?: string; data?: string[][] };
-      if (json.code !== "0" || !Array.isArray(json.data)) throw new Error(`code ${json.code}`);
-      return json.data
-        .filter((r) => Number(r[0]) + DAY_MS <= now && Number(r[0]) >= fromMs)
-        .map((r) => ({ openTime: Number(r[0]), close: Number(r[4]) }));
-    },
-  ];
-  const names = ["binance", "bybit", "okx"];
-  for (let i = 0; i < sources.length; i++) {
-    try {
-      const rows = await sources[i]();
-      if (!rows.length) continue;
-      console.log(JSON.stringify({ event: "rest-fallback", source: names[i], symbol, from: fromMs, rows: rows.length }));
-      return rows;
-    } catch (e) {
-      console.log(JSON.stringify({ event: "rest-miss", source: names[i], symbol, error: (e as Error).message }));
-    }
-  }
-  return [];
-}
-
 async function boundedFetch(urls: string[], symbol: string, concurrency = 8): Promise<Kline[]> {
   const out: Kline[][] = [];
   for (let i = 0; i < urls.length; i += concurrency) {
@@ -286,13 +227,6 @@ export async function fetchDailySeries(kv: KVNamespace, symbol: string, days: nu
         cache = await extend(kv, symbol, cache, rows, lastClosed);
       }
     }
-  }
-
-  // Архивы Binance публикуются с задержкой ~1.5-2.5 ч: если последний
-  // закрытый день ещё недоступен в архиве, добираем его через REST API.
-  if (cache.lastOpenTime < lastClosed) {
-    const rows = await restDailyRows(symbol, cache.lastOpenTime + DAY_MS, lastClosed);
-    if (rows.length) cache = await extend(kv, symbol, cache, rows, lastClosed);
   }
 
   const n = Math.min(cache.closes.length, Math.max(days, 1));
