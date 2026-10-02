@@ -5,4 +5,5 @@ interface Env {
   WEBHOOK_SECRET?: string;
   TELEGRAM_CHAT_ID?: string;
   TELEGRAM_ALLOWED_IDS?: string;
+  CF_VERSION?: { id: string; tag?: string; timestamp: string };
 }

@@ -1,6 +1,9 @@
 import { STRATEGIES, SYMBOLS, type Signal, type StrategyId } from "./strategy";
 import type { BotState } from "./state";
 
+// Метка версии кода — меняйте при значимых правках, чтобы видеть в /help и /status, что задеплоено.
+export const BOT_BUILD = "2026-10-02 · REST Binance, отчёт 00:10 UTC";
+
 function posEmoji(position: string): string {
   return position === "USDT" ? "⚪" : "🟢";
 }
@@ -39,6 +42,8 @@ export function helpText(): string {
     "/help — помощь",
     "",
     "Данные: Binance, дневные свечи (UTC). Только уведомления, без авто-трейдинга.",
+    "Ежедневный отчёт: 00:10 UTC (03:10 Киев летом / 02:10 зимой).",
+    `Версия: ${BOT_BUILD}`,
   ].join("\n");
 }
 
@@ -71,7 +76,7 @@ export function dailyText(id: StrategyId, signal: Signal): string {
   return `📆 Ежедневный отчёт\n\n${signalText(id, signal)}`;
 }
 
-export function statusText(id: StrategyId, signal: Signal, state: BotState): string {
+export function statusText(id: StrategyId, signal: Signal, state: BotState, extra: string[] = []): string {
   const meta = STRATEGIES[id];
   const lines = [
     `ℹ️ Статус • ${meta.name}`,
@@ -85,6 +90,7 @@ export function statusText(id: StrategyId, signal: Signal, state: BotState): str
       `🔒 min_hold: держим ${state.minHold.holding} (последняя смена ${state.minHold.lastChangeDate ?? "—"})`,
     );
   }
+  if (extra.length) lines.push("", ...extra);
   lines.push("", "Сменить стратегию: /strategy B | /strategy D | /strategy F");
   return lines.join("\n");
 }
@@ -109,4 +115,45 @@ export function lastText(id: StrategyId, history: BotState["history"], current: 
 export function switchStrategyReply(id: StrategyId): string {
   const meta = STRATEGIES[id];
   return `Стратегия: ${meta.name} (${meta.desc}). Текущий сигнал — /signal`;
+}
+// Предупреждение: свеча за вчера (UTC) ещё не получена, сигнал посчитан по старым данным.
+export function staleText(expectedDate: string, lastDate: string, errors: string[]): string {
+  const lines = [
+    `⚠️ Нет свечи за ${expectedDate} — данные только по ${lastDate}.`,
+    "Сигнал ниже — СТАРЫЙ, не по последней закрытой свече.",
+  ];
+  if (errors.length) {
+    // ошибки вида «BTC: причина» группируем по причине: «причина (BTC, ETH, …)»
+    const byReason = new Map<string, string[]>();
+    for (const e of errors) {
+      const i = e.indexOf(": ");
+      const sym = i > 0 ? e.slice(0, i) : "";
+      const reason = i > 0 ? e.slice(i + 2) : e;
+      byReason.set(reason, [...(byReason.get(reason) ?? []), sym].filter(Boolean));
+    }
+    lines.push("", "Причина:");
+    for (const [reason, syms] of byReason) lines.push(`• ${reason}${syms.length ? ` (${syms.join(", ")})` : ""}`);
+  }
+  lines.push("", "Повтори /signal позже или запусти локально: npm run signal");
+  return lines.join("\n");
+}
+
+export function dailyStaleText(
+  id: StrategyId,
+  signal: Signal,
+  expectedDate: string,
+  lastDate: string,
+  errors: string[],
+): string {
+  return `📆 Ежедневный отчёт — НЕ УДАЛОСЬ получить свежие данные\n\n${staleText(expectedDate, lastDate, errors)}\n\n———\n${signalText(id, signal)}`;
+}
+
+export function dailyErrorText(error: string): string {
+  return [
+    "📆 Ежедневный отчёт — ОШИБКА",
+    "",
+    `⚠️ ${error}`,
+    "",
+    "Сигнал не посчитан. Повтори /signal позже или запусти локально: npm run signal",
+  ].join("\n");
 }

@@ -1,10 +1,21 @@
-import { buildMarket } from "./binance";
-import { SYMBOLS, type Market, type StrategyId } from "./strategy";
+import { buildMarket, probeBinance, type MarketResult } from "./binance";
+import { SYMBOLS, type StrategyId } from "./strategy";
 import { evaluate } from "./signalService";
 import type { BotState } from "./state";
 import { loadState, saveState } from "./state";
 import { sendMessage } from "./telegram";
-import { helpText, signalText, statusText, lastText, switchStrategyReply, dailyText } from "./messages";
+import {
+  helpText,
+  signalText,
+  statusText,
+  lastText,
+  switchStrategyReply,
+  dailyText,
+  dailyStaleText,
+  dailyErrorText,
+  staleText,
+  BOT_BUILD,
+} from "./messages";
 
 function parseCommand(text: string): { cmd: string; arg: string } {
   const t = text.trim().toLowerCase();
@@ -17,8 +28,14 @@ function isAllowed(chatId: number, allowedIds: string[]): boolean {
   return allowedIds.length === 0 || allowedIds.includes(String(chatId));
 }
 
-function marketFor(env: Env, strategy: StrategyId): Promise<Market> {
+function marketFor(env: Env, strategy: StrategyId): Promise<MarketResult> {
   return buildMarket(env.STATE, env.SIGNAL_CANDLES, SYMBOLS[strategy]);
+}
+
+async function versionLines(env: Env): Promise<string[]> {
+  const v = env.CF_VERSION;
+  const deployed = v ? `${v.id.slice(0, 8)} от ${v.timestamp.slice(0, 16).replace("T", " ")} UTC` : "—";
+  return [`🛠 Код: ${BOT_BUILD}`, `🚀 Деплой: ${deployed}`, "Binance REST из Cloudflare:", ...(await probeBinance())];
 }
 
 export async function handleMessage(env: Env, chatId: number, messageId: number, text: string): Promise<void> {
@@ -45,15 +62,16 @@ export async function handleMessage(env: Env, chatId: number, messageId: number,
       case "/signal":
       case "/status":
       case "/last": {
-        const market = await marketFor(env, state.strategy);
-        const r = evaluate(state.strategy, market, state);
+        const m = await marketFor(env, state.strategy);
+        const r = evaluate(state.strategy, m.market, state);
         next = r.state;
         reply =
           cmd === "/signal"
             ? signalText(state.strategy, r.signal)
             : cmd === "/status"
-              ? statusText(state.strategy, r.signal, next)
+              ? statusText(state.strategy, r.signal, next, await versionLines(env))
               : lastText(state.strategy, next.history, r.signal);
+        if (!m.fresh) reply = `${staleText(m.expectedDate, m.lastDate, m.errors)}\n\n———\n${reply}`;
         break;
       }
       case "/strategy": {
@@ -79,13 +97,39 @@ export async function handleMessage(env: Env, chatId: number, messageId: number,
   console.log(JSON.stringify({ event: "handled", chatId, cmd, strategy: next.strategy }));
 }
 
+// Дневной отчёт (cron 00:10 UTC). Сообщение приходит ВСЕГДА: либо свежий сигнал,
+// либо явное предупреждение/ошибка — чтобы не гадать, почему отчёта нет.
 export async function sendDaily(env: Env): Promise<void> {
   const state = await loadState(env.STATE);
   const chatId = state.chatId ?? env.TELEGRAM_CHAT_ID ?? "";
   if (!chatId) throw new Error("Нет chat_id: напишите боту /start или задайте TELEGRAM_CHAT_ID");
 
-  const market = await marketFor(env, state.strategy);
-  const { signal, state: next } = evaluate(state.strategy, market, state);
+  let m: MarketResult;
+  try {
+    m = await marketFor(env, state.strategy);
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, dailyErrorText(error));
+    console.error(JSON.stringify({ event: "daily-error", error, strategy: state.strategy }));
+    return;
+  }
+
+  const { signal, state: next } = evaluate(state.strategy, m.market, state);
+
+  if (!m.fresh) {
+    // lastDailyDate не пишем: свежий сигнал можно получить позже через /signal.
+    await sendMessage(
+      env.TELEGRAM_BOT_TOKEN,
+      chatId,
+      dailyStaleText(state.strategy, signal, m.expectedDate, m.lastDate, m.errors),
+    );
+    await saveState(env.STATE, { ...next, lastDailyDate: state.lastDailyDate });
+    console.warn(
+      JSON.stringify({ event: "daily-stale", expected: m.expectedDate, last: m.lastDate, errors: m.errors }),
+    );
+    return;
+  }
+
   if (next.lastDailyDate === signal.date) {
     console.log(JSON.stringify({ event: "daily-skip", date: signal.date, strategy: state.strategy }));
     return;
