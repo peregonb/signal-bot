@@ -41,7 +41,7 @@ export default {
     try {
       // 30 2 * * * — сверка Bybit → Binance; остальное — дневной отчёт.
       if (controller.cron === "30 2 * * *") await verifyDaily(env);
-      else await sendDaily(env);
+      else await sendDaily(env, { cron: controller.cron, at: new Date(controller.scheduledTime).toISOString() });
     } catch (e) {
       console.error(JSON.stringify({ event: "scheduled-error", error: e instanceof Error ? e.message : String(e) }));
     }

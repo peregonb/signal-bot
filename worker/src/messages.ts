@@ -2,7 +2,7 @@ import { STRATEGIES, SYMBOLS, type Signal, type StrategyId } from "./strategy";
 import type { BotState } from "./state";
 
 // Метка версии кода — меняйте при значимых правках, чтобы видеть в /help и /status, что задеплоено.
-export const BOT_BUILD = "2026-10-02c · Bybit в 00:05 UTC, сверка с Binance в 02:30 UTC";
+export const BOT_BUILD = "2026-10-10 · отчёт 00:05 UTC, сверка 02:30 UTC, ⏱ в отчёте";
 
 function posEmoji(position: string): string {
   return position === "USDT" ? "⚪" : "🟢";

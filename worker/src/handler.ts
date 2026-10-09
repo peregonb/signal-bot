@@ -108,7 +108,9 @@ export async function handleMessage(env: Env, chatId: number, messageId: number,
 
 // Дневной отчёт (cron 00:05 UTC). Сообщение приходит ВСЕГДА: либо свежий сигнал,
 // либо явное предупреждение/ошибка — чтобы не гадать, почему отчёта нет.
-export async function sendDaily(env: Env): Promise<void> {
+export async function sendDaily(env: Env, run?: { cron: string; at: string }): Promise<void> {
+  // Откуда пришёл запуск — видно в конце сообщения (диагностика расписания).
+  const runLine = run ? `\n\n⏱ cron «${run.cron}», запуск ${run.at.slice(11, 19)} UTC` : "";
   const state = await loadState(env.STATE);
   const chatId = state.chatId ?? env.TELEGRAM_CHAT_ID ?? "";
   if (!chatId) throw new Error("Нет chat_id: напишите боту /start или задайте TELEGRAM_CHAT_ID");
@@ -118,7 +120,7 @@ export async function sendDaily(env: Env): Promise<void> {
     m = await marketFor(env, state.strategy);
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
-    await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, dailyErrorText(error));
+    await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, dailyErrorText(error) + runLine);
     console.error(JSON.stringify({ event: "daily-error", error, strategy: state.strategy }));
     return;
   }
@@ -130,7 +132,7 @@ export async function sendDaily(env: Env): Promise<void> {
     await sendMessage(
       env.TELEGRAM_BOT_TOKEN,
       chatId,
-      dailyStaleText(state.strategy, signal, m.expectedDate, m.lastDate, m.errors),
+      dailyStaleText(state.strategy, signal, m.expectedDate, m.lastDate, m.errors) + runLine,
     );
     await saveState(env.STATE, { ...next, lastDailyDate: state.lastDailyDate });
     console.warn(
@@ -147,7 +149,7 @@ export async function sendDaily(env: Env): Promise<void> {
   await sendMessage(
     env.TELEGRAM_BOT_TOKEN,
     chatId,
-    m.provisional ? `${text}\n\n${provisionalNote(m.lastDate, m.provisionalSymbols)}` : text,
+    (m.provisional ? `${text}\n\n${provisionalNote(m.lastDate, m.provisionalSymbols)}` : text) + runLine,
   );
   next.lastDailyDate = signal.date;
   next.lastDaily = { date: signal.date, position: signal.position, provisional: m.provisional };
