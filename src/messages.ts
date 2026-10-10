@@ -35,6 +35,7 @@ export function helpText(): string {
     "/strategy B — B-реко (BTC ↔ ETH, EMA 20/80)",
     "/strategy D — D-реко (ротация топ-1, EMA 10/50)",
     "/strategy F — F-реко (D + SUI, ротация топ-1, EMA 10/50)",
+    "/strategy F55 — F (+5/−5): F-реко + Ингибитор +5% / Катализатор −5%",
     "/last — последние сигналы",
     "/help — помощь",
     "",
@@ -54,10 +55,21 @@ export function signalText(id: StrategyId, signal: Signal): string {
     "",
     `EMA${meta.fast} ${fmtNum(signal.emaFast)} ${cmp} EMA${meta.slow} ${fmtNum(signal.emaSlow)} — ${bull}`,
   ];
-  if (signal.bull) {
+  if (signal.modifier === "inhibitor") {
+    lines.push(
+      `🛑 Ингибитор: моментум BTC ${meta.mom}д ${fmtPct(signal.momBTC)} < ${fmtPct(meta.inhibitor ?? 0)} → стейбл, хотя тренд бычий.`,
+    );
+  } else if (signal.modifier === "catalyst") {
+    lines.push(
+      `⚡ Катализатор: моментум BTC ${meta.mom}д ${fmtPct(signal.momBTC)} > ${fmtPct(meta.catalyst ?? 0)} → покупаем лидера, хотя тренд медвежий.`,
+    );
+  } else if (meta.inhibitor !== undefined || meta.catalyst !== undefined) {
+    lines.push(`Моментум BTC ${meta.mom}д ${fmtPct(signal.momBTC)} — модификаторы не сработали.`);
+  }
+  if (signal.inMarket) {
     lines.push(`Моментум ${meta.mom}д (${SYMBOLS[id].join(" / ")}):`);
     lines.push(...momLines(id, signal));
-  } else {
+  } else if (signal.modifier !== "inhibitor") {
     lines.push("BTC в медвежьем тренде → держим стейбл (USDT).");
   }
   if (signal.blocked) {
@@ -80,12 +92,12 @@ export function statusText(id: StrategyId, signal: Signal, state: BotState): str
     `📅 Закрытая свеча: ${signal.date}`,
     `${posEmoji(signal.position)} Позиция: ${signal.position}`,
   ];
-  if ((id === "D" || id === "F") && state.minHold?.holding) {
+  if (id !== "B" && state.minHold?.holding) {
     lines.push(
       `🔒 min_hold: держим ${state.minHold.holding} (последняя смена ${state.minHold.lastChangeDate ?? "—"})`,
     );
   }
-  lines.push("", "Сменить стратегию: /strategy B | /strategy D | /strategy F");
+  lines.push("", "Сменить стратегию: /strategy B | /strategy D | /strategy F | /strategy F55");
   return lines.join("\n");
 }
 

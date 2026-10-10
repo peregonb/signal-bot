@@ -1,3 +1,4 @@
+import type { StrategyId } from "./strategy";
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 
@@ -7,7 +8,7 @@ export interface BotMinHold {
 }
 
 export interface BotState {
-  strategy: "B" | "D" | "F";
+  strategy: StrategyId;
   offset: number;
   chatId?: string;
   lastDailyDate?: string;

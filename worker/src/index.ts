@@ -2,6 +2,8 @@ import type { TgUpdate } from "./telegram";
 import { handleMessage, sendDaily, verifyDaily } from "./handler";
 
 const WEBHOOK_PATH = "/webhook";
+// Минуты попыток дневного отчёта (должны совпадать с cron «5,7,9,11,13 0 * * *» в wrangler.jsonc).
+const DAILY_MINUTES = [5, 7, 9, 11, 13];
 
 async function verifySecret(request: Request, env: Env): Promise<boolean> {
   const secret = env.WEBHOOK_SECRET;
@@ -41,7 +43,18 @@ export default {
     try {
       // 30 2 * * * — сверка Bybit → Binance; остальное — дневной отчёт.
       if (controller.cron === "30 2 * * *") await verifyDaily(env);
-      else await sendDaily(env, { cron: controller.cron, at: new Date(controller.scheduledTime).toISOString() });
+      else {
+        const at = new Date(controller.scheduledTime);
+        const minute = at.getUTCMinutes();
+        const attempts = DAILY_MINUTES.filter((x) => x <= minute).length || 1;
+        await sendDaily(env, {
+          cron: controller.cron,
+          at: at.toISOString(),
+          attempt: attempts,
+          total: DAILY_MINUTES.length,
+          final: minute >= DAILY_MINUTES[DAILY_MINUTES.length - 1],
+        });
+      }
     } catch (e) {
       console.error(JSON.stringify({ event: "scheduled-error", error: e instanceof Error ? e.message : String(e) }));
     }

@@ -1,7 +1,7 @@
 import { loadConfig } from "../config";
 import { buildMarket } from "../binance";
 import { loadState, saveState } from "../state";
-import { STRATEGIES, SYMBOLS, type StrategyId } from "../strategy";
+import { STRATEGIES, SYMBOLS, parseStrategyId, type StrategyId } from "../strategy";
 import { evaluate } from "../signalService";
 import { signalText } from "../messages";
 
@@ -26,8 +26,8 @@ function parseStrategyOverride(argv: string[]): StrategyId | null {
     }
   }
   if (!v) return null;
-  const up = v.trim().toUpperCase();
-  if (up in STRATEGIES) return up as StrategyId;
+  const id = parseStrategyId(v);
+  if (id) return id;
   console.error(
     `Неизвестная стратегия «${v}». Доступные: ${Object.keys(STRATEGIES).join(", ")}`,
   );

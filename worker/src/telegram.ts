@@ -21,6 +21,7 @@ export async function sendMessage(
   chatId: string,
   text: string,
   replyTo?: number,
+  silent = false, // disable_notification: сообщение без звука/вибрации
 ): Promise<void> {
   const res = await fetch(`${API}/bot${token}/sendMessage`, {
     method: "POST",
@@ -30,6 +31,7 @@ export async function sendMessage(
       text,
       reply_to_message_id: replyTo,
       disable_web_page_preview: true,
+      disable_notification: silent,
     }),
     signal: AbortSignal.timeout(25000),
   });

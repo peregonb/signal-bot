@@ -1,10 +1,11 @@
+import type { StrategyId } from "./strategy";
 export interface BotMinHold {
   lastChangeDate?: string;
   holding?: string;
 }
 
 export interface BotState {
-  strategy: "B" | "D" | "F";
+  strategy: StrategyId;
   chatId?: string;
   lastDailyDate?: string;
   // Что ушло в последнем дневном отчёте — для сверки Bybit → Binance (cron 02:30 UTC).
@@ -22,9 +23,11 @@ export function emptyState(): BotState {
 
 const STATE_KEY = "state";
 
-export async function loadState(kv: KVNamespace): Promise<BotState> {
+// cacheTtl — сколько секунд этот город может отдавать закэшированное значение (минимум 30).
+// Дневной отчёт читает с минимальным кэшем, чтобы не пропустить «отчёт уже отправлен».
+export async function loadState(kv: KVNamespace, cacheTtl?: number): Promise<BotState> {
   try {
-    const raw = await kv.get(STATE_KEY);
+    const raw = await kv.get(STATE_KEY, cacheTtl ? { cacheTtl } : undefined);
     if (raw) return { ...emptyState(), ...(JSON.parse(raw) as BotState) };
   } catch {
     // повреждённые данные → чистый старт

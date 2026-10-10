@@ -2,7 +2,7 @@ import { STRATEGIES, SYMBOLS, type Signal, type StrategyId } from "./strategy";
 import type { BotState } from "./state";
 
 // Метка версии кода — меняйте при значимых правках, чтобы видеть в /help и /status, что задеплоено.
-export const BOT_BUILD = "2026-10-10 · отчёт 00:05 UTC, сверка 02:30 UTC, ⏱ в отчёте";
+export const BOT_BUILD = "2026-10-10 · F55, один отчёт 00:05 (тихие повторы до 00:13), тихая сверка 02:30 UTC";
 
 function posEmoji(position: string): string {
   return position === "USDT" ? "⚪" : "🟢";
@@ -38,11 +38,12 @@ export function helpText(): string {
     "/strategy B — B-реко (BTC ↔ ETH, EMA 20/80)",
     "/strategy D — D-реко (ротация топ-1, EMA 10/50)",
     "/strategy F — F-реко (D + SUI, ротация топ-1, EMA 10/50)",
+    "/strategy F55 — F (+5/−5): F-реко + Ингибитор +5% / Катализатор −5%",
     "/last — последние сигналы",
     "/help — помощь",
     "",
     "Данные: Binance, дневные свечи (UTC). Только уведомления, без авто-трейдинга.",
-    "Ежедневный отчёт: 00:05 UTC (03:05 Киев летом / 02:05 зимой).",
+    "Ежедневный отчёт: одно сообщение в 00:05 UTC (03:05 Киев летом / 02:05 зимой), максимум до 00:13.",
     `Версия: ${BOT_BUILD}`,
   ].join("\n");
 }
@@ -59,10 +60,21 @@ export function signalText(id: StrategyId, signal: Signal): string {
     "",
     `EMA${meta.fast} ${fmtNum(signal.emaFast)} ${cmp} EMA${meta.slow} ${fmtNum(signal.emaSlow)} — ${bull}`,
   ];
-  if (signal.bull) {
+  if (signal.modifier === "inhibitor") {
+    lines.push(
+      `🛑 Ингибитор: моментум BTC ${meta.mom}д ${fmtPct(signal.momBTC)} < ${fmtPct(meta.inhibitor ?? 0)} → стейбл, хотя тренд бычий.`,
+    );
+  } else if (signal.modifier === "catalyst") {
+    lines.push(
+      `⚡ Катализатор: моментум BTC ${meta.mom}д ${fmtPct(signal.momBTC)} > ${fmtPct(meta.catalyst ?? 0)} → покупаем лидера, хотя тренд медвежий.`,
+    );
+  } else if (meta.inhibitor !== undefined || meta.catalyst !== undefined) {
+    lines.push(`Моментум BTC ${meta.mom}д ${fmtPct(signal.momBTC)} — модификаторы не сработали.`);
+  }
+  if (signal.inMarket) {
     lines.push(`Моментум ${meta.mom}д (${SYMBOLS[id].join(" / ")}):`);
     lines.push(...momLines(id, signal));
-  } else {
+  } else if (signal.modifier !== "inhibitor") {
     lines.push("BTC в медвежьем тренде → держим стейбл (USDT).");
   }
   if (signal.blocked) {
@@ -85,13 +97,13 @@ export function statusText(id: StrategyId, signal: Signal, state: BotState, extr
     `📅 Закрытая свеча: ${signal.date}`,
     `${posEmoji(signal.position)} Позиция: ${signal.position}`,
   ];
-  if ((id === "D" || id === "F") && state.minHold?.holding) {
+  if (id !== "B" && state.minHold?.holding) {
     lines.push(
       `🔒 min_hold: держим ${state.minHold.holding} (последняя смена ${state.minHold.lastChangeDate ?? "—"})`,
     );
   }
   if (extra.length) lines.push("", ...extra);
-  lines.push("", "Сменить стратегию: /strategy B | /strategy D | /strategy F");
+  lines.push("", "Сменить стратегию: /strategy B | /strategy D | /strategy F | /strategy F55");
   return lines.join("\n");
 }
 
@@ -116,36 +128,43 @@ export function switchStrategyReply(id: StrategyId): string {
   const meta = STRATEGIES[id];
   return `Стратегия: ${meta.name} (${meta.desc}). Текущий сигнал — /signal`;
 }
-// Предупреждение: свеча за вчера (UTC) ещё не получена, сигнал посчитан по старым данным.
-export function staleText(expectedDate: string, lastDate: string, errors: string[]): string {
-  const lines = [
-    `⚠️ Нет свечи за ${expectedDate} — данные только по ${lastDate}.`,
-    "Сигнал ниже — СТАРЫЙ, не по последней закрытой свече.",
-  ];
-  if (errors.length) {
-    // ошибки вида «BTC: причина» группируем по причине: «причина (BTC, ETH, …)»
-    const byReason = new Map<string, string[]>();
-    for (const e of errors) {
-      const i = e.indexOf(": ");
-      const sym = i > 0 ? e.slice(0, i) : "";
-      const reason = i > 0 ? e.slice(i + 2) : e;
-      byReason.set(reason, [...(byReason.get(reason) ?? []), sym].filter(Boolean));
-    }
-    lines.push("", "Причина:");
-    for (const [reason, syms] of byReason) lines.push(`• ${reason}${syms.length ? ` (${syms.join(", ")})` : ""}`);
+// Причины неудачи: ошибки вида «BTC: причина» группируем по причине: «причина (BTC, ETH, …)».
+function reasonLines(errors: string[]): string[] {
+  if (!errors.length) return [];
+  const byReason = new Map<string, string[]>();
+  for (const e of errors) {
+    const i = e.indexOf(": ");
+    const sym = i > 0 ? e.slice(0, i) : "";
+    const reason = i > 0 ? e.slice(i + 2) : e;
+    byReason.set(reason, [...(byReason.get(reason) ?? []), sym].filter(Boolean));
   }
-  lines.push("", "Повтори /signal позже или запусти локально: npm run signal");
-  return lines.join("\n");
+  const lines = ["", "Причина:"];
+  for (const [reason, syms] of byReason) lines.push(`• ${reason}${syms.length ? ` (${syms.join(", ")})` : ""}`);
+  return lines;
 }
 
-export function dailyStaleText(
-  id: StrategyId,
-  signal: Signal,
-  expectedDate: string,
-  lastDate: string,
-  errors: string[],
-): string {
-  return `📆 Ежедневный отчёт — НЕ УДАЛОСЬ получить свежие данные\n\n${staleText(expectedDate, lastDate, errors)}\n\n———\n${signalText(id, signal)}`;
+// Предупреждение для /signal: свеча за вчера (UTC) ещё не получена, сигнал посчитан по старым данным.
+export function staleText(expectedDate: string, lastDate: string, errors: string[]): string {
+  return [
+    `⚠️ Нет свечи за ${expectedDate} — данные только по ${lastDate}.`,
+    "Сигнал ниже — СТАРЫЙ, не по последней закрытой свече.",
+    ...reasonLines(errors),
+    "",
+    "Повтори /signal позже или запусти локально: npm run signal",
+  ].join("\n");
+}
+
+// Дневной отчёт: все попытки не получили свежую свечу. Старый сигнал не показываем.
+export function dailyStaleText(expectedDate: string, lastDate: string, errors: string[], attempts: number): string {
+  return [
+    "📆 Ежедневный отчёт — НЕ УДАЛОСЬ получить свежие данные",
+    "",
+    `⚠️ Свеча за ${expectedDate} не получена (${attempts} попыток, 00:05–00:13 UTC). Последние данные — за ${lastDate}.`,
+    ...reasonLines(errors),
+    "",
+    "👉 Отправь /signal — команда выполняется рядом с тобой и обычно получает свечу с Bybit.",
+    "Примерно в 02:30 UTC (05:30 Киев) выходит архив Binance — /signal после этого возьмёт его.",
+  ].join("\n");
 }
 
 export function dailyErrorText(error: string): string {
@@ -162,13 +181,13 @@ export function provisionalNote(date: string, symbols: string[]): string {
   return [
     `📡 Свеча ${date} по ${symbols.join(", ")} — с Bybit (предварительно): Binance не пускает Cloudflare,`,
     "а архив Binance выходит ~через 2 ч после закрытия.",
-    "В 02:30 UTC (05:30 Киев летом) бот сверит с архивом Binance и напишет, ТОЛЬКО если сигнал изменится.",
+    "В 02:30 UTC (05:30 Киев летом) бот сверит с архивом Binance и напишет — без звука — ТОЛЬКО если сигнал изменится.",
   ].join("\n");
 }
 
 export function verifyChangedText(id: StrategyId, signal: Signal, before: string): string {
   return [
-    "❗ Сверка с архивом Binance: сигнал ИЗМЕНИЛСЯ",
+    "❗ Сверка с архивом Binance: сигнал ИЗМЕНИЛСЯ (сообщение без звука)",
     `По Bybit было: ${before} → по Binance: ${signal.position}`,
     "",
     signalText(id, signal),

@@ -1,6 +1,6 @@
 import type { Config } from "./config";
 import { buildMarket } from "./binance";
-import { SYMBOLS } from "./strategy";
+import { SYMBOLS, parseStrategyId } from "./strategy";
 import { evaluate } from "./signalService";
 import type { BotState } from "./state";
 import type { TgUpdate } from "./telegram";
@@ -71,9 +71,9 @@ export async function processUpdates(
           break;
         }
         case "/strategy": {
-          const v = arg.trim().toUpperCase();
-          if (v !== "B" && v !== "D" && v !== "F") {
-            reply = `Не распознал «${arg}». Используй /strategy B, /strategy D или /strategy F`;
+          const v = parseStrategyId(arg);
+          if (!v) {
+            reply = `Не распознал «${arg}». Используй /strategy B, D, F или F55`;
             break;
           }
           next = { ...cur, strategy: v };
